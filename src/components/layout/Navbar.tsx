@@ -27,8 +27,8 @@ const Navbar = () => {
 
   // ✅ Nav Links based on login
   const navLinks = [
-    { name: "Features", href: "http://localhost:5173/#features" },
-    { name: "How it Works", href: "http://localhost:5173/#how-it-works" },
+    { name: "Features", href: "/features" },
+    { name: "How it Works", href: "/how-it-works" },
     { name: "Admin", href: "/admin/login" },
     ...(user ? [
       { name: "My QR", href: "/user/viewqr" }
@@ -39,7 +39,7 @@ const Navbar = () => {
     <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
       <div className="container mx-auto px-6">
         <div className="flex items-center justify-between h-16">
-          
+
           {/* ✅ Logo */}
           <Link to="/" className="flex items-center gap-2">
             <img
