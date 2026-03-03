@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 import { motion } from "framer-motion";
-import { ArrowRight, ArrowLeft, Copy, Clock, Loader2, XCircle, Calendar as CalendarIcon, User } from "lucide-react";
+import { ArrowRight, ArrowLeft, Copy, Clock, Loader2, XCircle, Calendar as CalendarIcon, User, MapPin } from "lucide-react";
 import { toast } from "sonner";
 
 import Navbar from "@/components/layout/Navbar";
@@ -25,16 +25,76 @@ const UserDashboard = () => {
   const [activeQRData, setActiveQRData] = useState<any>(null);
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendar, setCalendar] = useState<any[]>([]);
+  const [qrRevealed, setQrRevealed] = useState(false);
+
+  // Geofencing States
+  const [isNearMachine, setIsNearMachine] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>("Detecting location...");
 
   // ✅ Read ID Number
   const [params] = useSearchParams();
   const idNumber =
     params.get("id") || localStorage.getItem("userIdNumber") || "";
 
+  // ✅ Geofencing Logic
+  const MACHINE_LAT = parseFloat(import.meta.env.VITE_MACHINE_LATITUDE || "28.7090296");
+  const MACHINE_LNG = parseFloat(import.meta.env.VITE_MACHINE_LONGITUDE || "77.1439471");
+  const MAX_DISTANCE_KM = 1;
+
+  const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    
+    console.log(lat1, lon1, lat2, lon2)
+    const R = 6371; // Radius of earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setLocationError("Geolocation is not supported by your browser");
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        console.log(position.coords);
+        const dist = getDistance(
+          position.coords.latitude,
+          position.coords.longitude,
+          MACHINE_LAT,
+          MACHINE_LNG
+        );
+        setIsNearMachine(dist <= MAX_DISTANCE_KM);
+        setLocationError(dist <= MAX_DISTANCE_KM ? null : `You are ${dist.toFixed(2)}km away.`);
+      },
+      (error) => {
+        setIsNearMachine(false);
+        if (error.code === error.PERMISSION_DENIED) {
+          setLocationError("Location permission denied. Please enable it in your browser settings to access your QR.");
+        } else {
+          setLocationError("Unable to retrieve your location.");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
   /**
    * ✅ Fetch QR Pass Data with Auto-Refresh Polling
    * Polls every 5 seconds until approved or rejected
    */
+  useEffect(() => {
+    setQrRevealed(false);
+  }, [activeQRData?.activeQRType]);
+
   useEffect(() => {
     if (!idNumber) {
       setError(true);
@@ -84,7 +144,7 @@ const UserDashboard = () => {
       try {
         const response = await API.get(`/api/user/active-qr/${idNumber}`);
         setActiveQRData(response.data);
-        
+
         // Auto-switch tab to active QR
         if (response.data.activeQRType) {
           setActiveTab(response.data.activeQRType.toLowerCase());
@@ -228,6 +288,32 @@ const UserDashboard = () => {
   }
 
   /**
+   * ✅ EXPIRED - Show Expiration Message
+   */
+  const isExpired = userData?.validUntil && new Date(userData.validUntil) < new Date();
+
+  if (userData?.status === "APPROVED" && isExpired) {
+    return (
+      <div className="min-h-screen bg-hero-gradient">
+        <Navbar />
+        <div className="container mx-auto px-4 pt-24">
+          <div className="max-w-lg mx-auto glass-card p-10 text-center">
+            <XCircle className="w-10 h-10 text-destructive mx-auto mb-4" />
+            <h2 className="text-xl font-bold mb-2">Pass Expired</h2>
+            <p className="text-muted-foreground mb-6">
+              Your access pass expired on {formatDate(userData.validUntil)}.
+              Please request a new pass.
+            </p>
+            <Button onClick={() => navigate("/user/request")} className="w-full h-12">
+              Make New QR Request
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /**
    * ✅ APPROVED - Show QR Dashboard
    */
   return (
@@ -288,67 +374,108 @@ const UserDashboard = () => {
                 </div>
               )}
 
-              {/* Tabs */}
-              <Tabs
-                value={activeTab}
-                onValueChange={setActiveTab}
-                className="w-full"
-              >
-                <TabsList className="grid grid-cols-2 h-12 mb-6">
-                  <TabsTrigger value="in" disabled={activeQRData?.activeQRType !== "IN"}>
-                    <ArrowRight className="w-4 h-4 mr-1" />
-                    IN QR
-                  </TabsTrigger>
+              {/* Geofence Check */}
+              {!isNearMachine ? (
+                <div className="bg-destructive/10 border border-destructive rounded-xl p-6 mb-6 text-center">
+                  <MapPin className="w-8 h-8 mx-auto text-destructive mb-3" />
+                  <p className="text-destructive font-semibold mb-1">
+                    {locationError?.includes("denied") ? "Location Required" : "Too far from gate"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {locationError || "You must be within 1km of the machine to view your QR pass."}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Tabs */}
+                  <Tabs
+                    value={activeTab}
+                    onValueChange={setActiveTab}
+                    className="w-full"
+                  >
+                    <TabsList className="grid grid-cols-2 h-12 mb-6">
+                      <TabsTrigger value="in" disabled={activeQRData?.activeQRType !== "IN"}>
+                        <ArrowRight className="w-4 h-4 mr-1" />
+                        IN QR
+                      </TabsTrigger>
 
-                  <TabsTrigger value="out" disabled={activeQRData?.activeQRType !== "OUT"}>
-                    <ArrowLeft className="w-4 h-4 mr-1" />
-                    OUT QR
-                  </TabsTrigger>
-                </TabsList>
+                      <TabsTrigger value="out" disabled={activeQRData?.activeQRType !== "OUT"}>
+                        <ArrowLeft className="w-4 h-4 mr-1" />
+                        OUT QR
+                      </TabsTrigger>
+                    </TabsList>
 
-                {/* ✅ IN QR */}
-                <TabsContent value="in">
-                  {activeQRData?.activeQRType === "IN" && activeQRData?.qrToken ? (
-                    <div className="bg-white rounded-2xl p-8 flex justify-center">
-                      <QRCode value={activeQRData.qrToken} size={220} />
-                    </div>
-                  ) : (
-                    <div className="bg-muted/20 rounded-2xl p-8 text-center border border-dashed">
-                      <Clock className="w-6 h-6 mx-auto mb-3 text-muted-foreground" />
-                      <p className="text-muted-foreground text-sm">
-                        IN QR not active. Wait for rotation...
-                      </p>
-                    </div>
-                  )}
-                </TabsContent>
+                    {/* ✅ IN QR */}
+                    <TabsContent value="in">
+                      {activeQRData?.activeQRType === "IN" && activeQRData?.qrToken ? (
+                        <div
+                          className="relative bg-white rounded-2xl p-8 flex justify-center cursor-pointer"
+                          onClick={() => setQrRevealed(true)}
+                        >
+                          <div className={`${!qrRevealed ? "blur-xl" : ""}`}>
+                            <QRCode value={activeQRData.qrToken} size={220} />
+                          </div>
 
-                {/* ✅ OUT QR */}
-                <TabsContent value="out">
-                  {activeQRData?.activeQRType === "OUT" && activeQRData?.qrToken ? (
-                    <div className="bg-white rounded-2xl p-8 flex justify-center">
-                      <QRCode value={activeQRData.qrToken} size={220} />
-                    </div>
-                  ) : (
-                    <div className="bg-muted/20 rounded-2xl p-8 text-center border border-dashed">
-                      <Clock className="w-6 h-6 mx-auto mb-3 text-muted-foreground" />
-                      <p className="text-muted-foreground text-sm">
-                        OUT QR not active. Wait for rotation...
-                      </p>
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
+                          {!qrRevealed && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <p className="text-sm font-semibold text-primary">
+                                Tap to Reveal QR
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bg-muted/20 rounded-2xl p-8 text-center border border-dashed">
+                          <Clock className="w-6 h-6 mx-auto mb-3 text-muted-foreground" />
+                          <p className="text-muted-foreground text-sm">
+                            IN QR not active. Wait for rotation...
+                          </p>
+                        </div>
+                      )}
+                    </TabsContent>
 
-              {/* Copy Button */}
-              <Button
-                variant="outline"
-                onClick={copyToken}
-                className="w-full mt-6"
-                disabled={!activeQRData?.qrToken}
-              >
-                <Copy className="w-4 h-4 mr-2" />
-                Copy Token
-              </Button>
+                    {/* ✅ OUT QR */}
+                    <TabsContent value="out">
+                      {activeQRData?.activeQRType === "OUT" && activeQRData?.qrToken ? (
+                        <div
+                          className="relative bg-white rounded-2xl p-8 flex justify-center cursor-pointer"
+                          onClick={() => setQrRevealed(true)}
+                        >
+                          <div className={`${!qrRevealed ? "blur-xl" : ""}`}>
+                            <QRCode value={activeQRData.qrToken} size={220} />
+                          </div>
+
+                          {!qrRevealed && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <p className="text-sm font-semibold text-primary">
+                                Tap to Reveal QR
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bg-muted/20 rounded-2xl p-8 text-center border border-dashed">
+                          <Clock className="w-6 h-6 mx-auto mb-3 text-muted-foreground" />
+                          <p className="text-muted-foreground text-sm">
+                            OUT QR not active. Wait for rotation...
+                          </p>
+                        </div>
+                      )}
+                    </TabsContent>
+                  </Tabs>
+
+                  {/* Copy Button */}
+                  <Button
+                    variant="outline"
+                    onClick={copyToken}
+                    className="w-full mt-6"
+                    disabled={!activeQRData?.qrToken}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy Token
+                  </Button>
+                </>
+              )}
 
               {/* View Calendar Button */}
               <Button
