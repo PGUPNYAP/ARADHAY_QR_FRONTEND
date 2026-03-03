@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
-import { Loader2, CheckCircle2, Clock } from "lucide-react";
+import { Loader2, CheckCircle2, Clock, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import API from "@/api/api";
@@ -25,6 +25,58 @@ const UserRequest = () => {
     validFrom: "",
     validUntil: "",
   });
+
+  // Geofencing States
+  const [isNearMachine, setIsNearMachine] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>("Detecting location...");
+
+  // ✅ Geofencing Logic
+  const MACHINE_LAT = parseFloat(import.meta.env.VITE_MACHINE_LATITUDE || "28.7090296");
+  const MACHINE_LNG = parseFloat(import.meta.env.VITE_MACHINE_LONGITUDE || "77.1439471");
+  const MAX_DISTANCE_KM = 1;
+
+  const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  React.useEffect(() => {
+    if (!navigator.geolocation) {
+      setLocationError("Geolocation is not supported by your browser");
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const dist = getDistance(
+          position.coords.latitude,
+          position.coords.longitude,
+          MACHINE_LAT,
+          MACHINE_LNG
+        );
+        setIsNearMachine(dist <= MAX_DISTANCE_KM);
+        setLocationError(dist <= MAX_DISTANCE_KM ? null : `You are ${dist.toFixed(2)}km away.`);
+      },
+      (error) => {
+        setIsNearMachine(false);
+        if (error.code === error.PERMISSION_DENIED) {
+          setLocationError("Location permission denied. Please enable it in your browser settings to request access.");
+        } else {
+          setLocationError("Unable to retrieve your location.");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +109,12 @@ const UserRequest = () => {
     // ✅ Validity check
     if (validFromDate >= validUntilDate) {
       toast.error("Valid Until must be after Valid From");
+      return;
+    }
+
+    // ✅ Geofence check
+    if (!isNearMachine) {
+      toast.error(locationError || "You must be near the gate to submit a request.");
       return;
     }
 
@@ -116,6 +174,19 @@ const UserRequest = () => {
                     Fill in your details and select validity dates
                   </p>
                 </div>
+
+                {/* Geofence Notice */}
+                {!isNearMachine && (
+                  <div className="bg-destructive/10 border border-destructive rounded-xl p-4 mb-6 text-center">
+                    <MapPin className="w-6 h-6 mx-auto text-destructive mb-2" />
+                    <p className="text-sm font-semibold text-destructive mb-1">
+                      {locationError?.includes("denied") ? "Location Required" : "Too far from gate"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {locationError || "You must be within 1km of the machine to request a QR pass."}
+                    </p>
+                  </div>
+                )}
 
                 <form onSubmit={handleSubmit} className="space-y-6">
                   {/* Full Name */}
@@ -187,7 +258,7 @@ const UserRequest = () => {
                   {/* Submit */}
                   <Button
                     type="submit"
-                    disabled={isLoading}
+                    disabled={isLoading || !isNearMachine}
                     className="w-full h-12 btn-gradient"
                   >
                     {isLoading ? (
